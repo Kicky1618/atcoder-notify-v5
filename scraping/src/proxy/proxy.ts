@@ -7,9 +7,11 @@ export namespace Proxy {
     let SocksHTTPProxy: SocksProxyAgent | null = null;
     let logger: Logger;
 
-    export function initProxy(url: string) {
+    export function initProxy(url: string | undefined) {
         logger = Main.getLogger().child('Proxy');
-        SocksHTTPProxy = new SocksProxyAgent(url);
+        if (url) {
+            SocksHTTPProxy = new SocksProxyAgent(url);
+        }
     }
     export function get(url: string, cookie: string) {
         const agent = SocksHTTPProxy || undefined;
