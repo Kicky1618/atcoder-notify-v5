@@ -24,7 +24,7 @@ export namespace Main {
 
         // Start Background tasks
         logger.info('Starting background tasks...');
-        Proxy.initProxy(process.env.SOCK5_PROXY!);
+        Proxy.initProxy(process.env.SOCK5_PROXY);
         await Database.initDatabase();
 
         await AtCoderScraper.initAtCoderScraper();
@@ -70,9 +70,6 @@ export namespace Main {
         return logger;
     }
     function createProxyServer() {
-        if (!process.env.SOCK5_PROXY) {
-            throw new Error('SOCK5_PROXY environment variable is not set');
-        }
         const baseURL = 'https://atcoder.jp';
         const server = http.createServer((req, res) => {
             const url = new URL(req.url!, baseURL);
