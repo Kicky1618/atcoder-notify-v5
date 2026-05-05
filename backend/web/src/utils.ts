@@ -19,8 +19,8 @@ export async function isValidPassword(password: string): Promise<PasswordValidat
         path.join(__dirname, '../statics/blacklistedPassword.txt'),
         'utf-8',
     );
-    const blacklistedPasswords = blacklistedPassword.split('\n').map((line) => line.trim());
-    if (blacklistedPasswords.includes(password)) {
+    const blacklistedPasswords = blacklistedPassword.split('\n').map((line) => line.trim().toLowerCase());
+    if (blacklistedPasswords.includes(password.toLowerCase())) {
         return PasswordValidation.Blacklisted;
     }
     return PasswordValidation.Valid;
@@ -47,8 +47,8 @@ export async function isValidUsername(username: string): Promise<UsernameValidat
         path.join(__dirname, '../statics/blacklistedUsername.txt'),
         'utf-8',
     );
-    const blacklistedUsernamesList = blacklistedUsernames.split('\n').map((line) => line.trim());
-    if (blacklistedUsernamesList.includes(username)) {
+    const blacklistedUsernamesList = blacklistedUsernames.split('\n').map((line) => line.trim().toLowerCase());
+    if (blacklistedUsernamesList.includes(username.toLowerCase())) {
         return UsernameValidation.Blacklisted;
     }
     return UsernameValidation.Valid;
