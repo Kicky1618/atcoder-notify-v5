@@ -38,6 +38,7 @@ export namespace AtCoderScraper {
         cron.schedule('*/1 * * * *', runEveryMinute, { timezone: 'Asia/Tokyo' });
         cron.schedule('0 7 * * *', runDaily, { timezone: 'Asia/Tokyo' });
         logger.info('AtCoder scraper cron jobs started successfully');
+        runDaily();
         CrawlAllSubmissionsEvent();
         CrawlContestResults();
     }
