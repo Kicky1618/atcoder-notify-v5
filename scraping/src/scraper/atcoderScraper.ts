@@ -9,7 +9,7 @@ import { nextTick } from 'process';
 import { TwitterApi } from 'twitter-api-v2';
 import { createCircleGraph } from '../utils/createCircleGraph';
 import sharp from 'sharp';
-import { rebuildUsersTable } from '../build_db/users';
+import { rebuildTasksTable } from '../build_db/tasks';
 
 export namespace AtCoderScraper {
     let sessionId: string | null = null;
@@ -38,9 +38,22 @@ export namespace AtCoderScraper {
         cron.schedule('*/1 * * * *', runEveryMinute, { timezone: 'Asia/Tokyo' });
         cron.schedule('0 7 * * *', runDaily, { timezone: 'Asia/Tokyo' });
         logger.info('AtCoder scraper cron jobs started successfully');
-        runDaily();
-        CrawlAllSubmissionsEvent();
+        refreshContestAndTaskTables()
+            .catch((error) => {
+                logger.error('Failed to refresh contest/task tables before submission crawling.', { error });
+            })
+            .finally(() => {
+                CrawlAllSubmissionsEvent();
+                runDaily().catch((error) => {
+                    logger.error('Initial daily run failed.', { error });
+                });
+            });
         CrawlContestResults();
+    }
+
+    async function refreshContestAndTaskTables() {
+        await ScraperContest.CrawlAllContest();
+        await rebuildTasksTable();
     }
 
     export async function CrawlContestResults(isNull = false) {
@@ -121,7 +134,7 @@ export namespace AtCoderScraper {
     async function runDaily() {
         logger.info('Running daily...');
         CrawlContestResults(true);
-        ScraperContest.CrawlAllContest();
+        await refreshContestAndTaskTables();
         const startOfToday = new Date();
         startOfToday.setHours(0, 0, 0, 0);
         const endOfToday = new Date();

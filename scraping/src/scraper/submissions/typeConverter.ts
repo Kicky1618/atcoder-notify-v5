@@ -114,14 +114,20 @@ export async function convertScraperSubmissionToPrismaSubmission(
         });
     }
 
-    const taskRecord = await db.tasks.findFirst({
+    let taskRecord = await db.tasks.findFirst({
         where: { contestid: submission.contestId, taskid: submission.problemId },
         select: { id: true },
     });
 
     if (!taskRecord) {
-        Main.getLogger().fatal(`Task not found for contest ${submission.contestId}, problem ${submission.problemId}`);
-        throw new Error(`Task not found for contest ${submission.contestId}, problem ${submission.problemId}`);
+        Main.getLogger().warn(`Task not found for contest ${submission.contestId}, problem ${submission.problemId}. Creating it automatically.`);
+        taskRecord = await db.tasks.create({
+            data: {
+                contestid: submission.contestId,
+                taskid: submission.problemId,
+            },
+            select: { id: true },
+        });
     }
 
     const sharedFields = {
