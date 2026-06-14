@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { config } from 'dotenv';
 import path from 'path';
 
@@ -58,29 +58,32 @@ function calculateAPerf(innerPerformances: number[]) {
     return weightedSum / (9 * (1 - 0.9 ** count));
 }
 
-async function rebuildUser(prisma: PrismaClient, userId: number, dryRun: boolean) {
-    const ratingEvents = await prisma.userRatingChangeEvent.findMany({
-        where: {
-            userId,
-            isRated: true,
-        },
-        include: {
-            contest: {
-                select: {
-                    endTime: true,
-                },
-            },
-        },
-        orderBy: [
-            {
+type UserWithRatings = Prisma.UserGetPayload<{
+    select: {
+        id: true;
+        name: true;
+        ratings: {
+            where: { isRated: true };
+            select: {
+                id: true;
+                newRating: true;
+                InnerPerformance: true;
+                isHeuristic: true;
                 contest: {
-                    endTime: 'asc',
-                },
-            },
-            { id: 'asc' },
-        ],
-    });
+                    select: {
+                        endTime: true;
+                    };
+                };
+            };
+        };
+    };
+}>;
 
+function rebuildUserData(user: UserWithRatings) {
+    const ratingEvents = [...user.ratings].sort((a, b) => {
+        const byEndTime = a.contest.endTime.getTime() - b.contest.endTime.getTime();
+        return byEndTime === 0 ? a.id - b.id : byEndTime;
+    });
     let algoRating = -1;
     let heuristicRating = -1;
     const algoInnerPerformances: number[] = [];
@@ -96,22 +99,13 @@ async function rebuildUser(prisma: PrismaClient, userId: number, dryRun: boolean
         }
     }
 
-    const data = {
+    return {
         algoRating,
         heuristicRating,
         algoAPerf: calculateAPerf(algoInnerPerformances),
         heuristicAPerf: calculateAPerf(heuristicInnerPerformances),
         lastContestTime: ratingEvents.length > 0 ? ratingEvents[ratingEvents.length - 1].contest.endTime : null,
     };
-
-    if (!dryRun) {
-        await prisma.user.update({
-            where: { id: userId },
-            data,
-        });
-    }
-
-    return data;
 }
 
 async function main() {
@@ -121,9 +115,10 @@ async function main() {
 
     try {
         const where = options.user ? { name: options.user } : {};
-        const batchSize = options.user ? 1 : 500;
+        const batchSize = options.user ? 1 : 1000;
         let cursor = 0;
         let processed = 0;
+        const startedAt = Date.now();
 
         while (true) {
             const users = await prisma.user.findMany({
@@ -136,20 +131,46 @@ async function main() {
                 select: {
                     id: true,
                     name: true,
+                    ratings: {
+                        where: { isRated: true },
+                        select: {
+                            id: true,
+                            newRating: true,
+                            InnerPerformance: true,
+                            isHeuristic: true,
+                            contest: {
+                                select: {
+                                    endTime: true,
+                                },
+                            },
+                        },
+                    },
                 },
             });
             if (users.length === 0) {
                 break;
             }
 
+            const updates: Prisma.PrismaPromise<unknown>[] = [];
             for (const user of users) {
-                const rebuilt = await rebuildUser(prisma, user.id, options.dryRun);
+                const rebuilt = rebuildUserData(user);
                 processed++;
+                if (!options.dryRun) {
+                    updates.push(
+                        prisma.user.update({
+                            where: { id: user.id },
+                            data: rebuilt,
+                        }),
+                    );
+                }
                 if (options.user || processed % 1000 === 0) {
                     console.log(
                         `${options.dryRun ? '[dry-run] ' : ''}rebuilt ${user.name}: algo=${rebuilt.algoRating}, heuristic=${rebuilt.heuristicRating}`,
                     );
                 }
+            }
+            if (updates.length > 0) {
+                await prisma.$transaction(updates);
             }
 
             cursor = users[users.length - 1].id;
@@ -161,7 +182,8 @@ async function main() {
         if (options.user && processed === 0) {
             throw new Error(`User not found: ${options.user}`);
         }
-        console.log(`${options.dryRun ? '[dry-run] ' : ''}rebuilt ratings for ${processed} user(s).`);
+        const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+        console.log(`${options.dryRun ? '[dry-run] ' : ''}rebuilt ratings for ${processed} user(s) in ${elapsed}s.`);
     } finally {
         await prisma.$disconnect();
     }
