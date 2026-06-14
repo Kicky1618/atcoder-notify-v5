@@ -136,6 +136,9 @@ model userRatingChangeEvent {
   isRated          Boolean  @default(true)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @default(now()) @updatedAt
+
+  @@index([userId, isRated, isHeuristic], name: "rating_user_rated_heuristic_idx")
+  @@index([contestId], name: "rating_contest_idx")
 }
 
 model Tasks {

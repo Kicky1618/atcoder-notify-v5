@@ -7,14 +7,17 @@ config({ path: path.join(__dirname, '../../../.env') });
 type Options = {
     user?: string;
     dryRun: boolean;
+    nodeMode: boolean;
 };
 
 function parseOptions(argv: string[]): Options {
-    const options: Options = { dryRun: false };
+    const options: Options = { dryRun: false, nodeMode: false };
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
         if (arg === '--dry-run') {
             options.dryRun = true;
+        } else if (arg === '--node') {
+            options.nodeMode = true;
         } else if (arg === '--user') {
             const user = argv[i + 1];
             if (!user) {
@@ -39,10 +42,14 @@ function printHelp() {
   npm run repair:ratings
   npm run repair:ratings -- --user <atcoder_user>
   npm run repair:ratings -- --dry-run
+  npm run repair:ratings -- --node
 
 Rebuilds User.algoRating, User.heuristicRating, User.algoAPerf,
 User.heuristicAPerf and User.lastContestTime from userRatingChangeEvent
-ordered by Contest.endTime.`);
+ordered by Contest.endTime.
+
+By default, full rebuilds run as one SQL UPDATE inside the database.
+Use --node only as a compatibility fallback.`);
 }
 
 function calculateAPerf(innerPerformances: number[]) {
@@ -108,82 +115,156 @@ function rebuildUserData(user: UserWithRatings) {
     };
 }
 
+async function rebuildAllUsersWithSql(prisma: PrismaClient, dryRun: boolean) {
+    if (dryRun) {
+        const [users, events] = await Promise.all([
+            prisma.user.count(),
+            prisma.userRatingChangeEvent.count({ where: { isRated: true } }),
+        ]);
+        console.log(`[dry-run] would rebuild ${users} user(s) from ${events} rated rating event(s) using SQL mode.`);
+        return users;
+    }
+
+    await prisma.$executeRawUnsafe(`
+        UPDATE \`User\` AS u
+        LEFT JOIN (
+            SELECT
+                userId,
+                MAX(CASE WHEN isHeuristic = 0 THEN latestRating END) AS algoRating,
+                MAX(CASE WHEN isHeuristic = 1 THEN latestRating END) AS heuristicRating,
+                MAX(CASE WHEN isHeuristic = 0 THEN aperf END) AS algoAPerf,
+                MAX(CASE WHEN isHeuristic = 1 THEN aperf END) AS heuristicAPerf,
+                MAX(lastContestTime) AS lastContestTime
+            FROM (
+                SELECT
+                    userId,
+                    isHeuristic,
+                    MAX(CASE WHEN rnDesc = 1 THEN newRating END) AS latestRating,
+                    SUM(InnerPerformance * POW(0.9, totalCount - rnAsc + 1)) / (9 * (1 - POW(0.9, totalCount))) AS aperf,
+                    MAX(endTime) AS lastContestTime
+                FROM (
+                    SELECT
+                        r.userId,
+                        r.isHeuristic,
+                        r.newRating,
+                        r.InnerPerformance,
+                        c.endTime,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY r.userId, r.isHeuristic
+                            ORDER BY c.endTime ASC, r.id ASC
+                        ) AS rnAsc,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY r.userId, r.isHeuristic
+                            ORDER BY c.endTime DESC, r.id DESC
+                        ) AS rnDesc,
+                        COUNT(*) OVER (
+                            PARTITION BY r.userId, r.isHeuristic
+                        ) AS totalCount
+                    FROM \`userRatingChangeEvent\` AS r
+                    INNER JOIN \`Contest\` AS c ON c.id = r.contestId
+                    WHERE r.isRated = 1
+                ) AS ordered_events
+                GROUP BY userId, isHeuristic, totalCount
+            ) AS per_kind
+            GROUP BY userId
+        ) AS stats ON stats.userId = u.id
+        SET
+            u.algoRating = COALESCE(stats.algoRating, -1),
+            u.heuristicRating = COALESCE(stats.heuristicRating, -1),
+            u.algoAPerf = stats.algoAPerf,
+            u.heuristicAPerf = stats.heuristicAPerf,
+            u.lastContestTime = stats.lastContestTime
+    `);
+
+    return prisma.user.count();
+}
+
+async function rebuildUsersWithNode(prisma: PrismaClient, options: Options) {
+    const where = options.user ? { name: options.user } : {};
+    const batchSize = options.user ? 1 : 1000;
+    let cursor = 0;
+    let processed = 0;
+
+    while (true) {
+        const users = await prisma.user.findMany({
+            where: {
+                ...where,
+                id: { gt: cursor },
+            },
+            orderBy: { id: 'asc' },
+            take: batchSize,
+            select: {
+                id: true,
+                name: true,
+                ratings: {
+                    where: { isRated: true },
+                    select: {
+                        id: true,
+                        newRating: true,
+                        InnerPerformance: true,
+                        isHeuristic: true,
+                        contest: {
+                            select: {
+                                endTime: true,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        if (users.length === 0) {
+            break;
+        }
+
+        const updates: Prisma.PrismaPromise<unknown>[] = [];
+        for (const user of users) {
+            const rebuilt = rebuildUserData(user);
+            processed++;
+            if (!options.dryRun) {
+                updates.push(
+                    prisma.user.update({
+                        where: { id: user.id },
+                        data: rebuilt,
+                    }),
+                );
+            }
+            if (options.user || processed % 1000 === 0) {
+                console.log(
+                    `${options.dryRun ? '[dry-run] ' : ''}rebuilt ${user.name}: algo=${rebuilt.algoRating}, heuristic=${rebuilt.heuristicRating}`,
+                );
+            }
+        }
+        if (updates.length > 0) {
+            await prisma.$transaction(updates);
+        }
+
+        cursor = users[users.length - 1].id;
+        if (options.user) {
+            break;
+        }
+    }
+
+    if (options.user && processed === 0) {
+        throw new Error(`User not found: ${options.user}`);
+    }
+    return processed;
+}
+
 async function main() {
     const options = parseOptions(process.argv.slice(2));
     const prisma = new PrismaClient();
     await prisma.$connect();
 
     try {
-        const where = options.user ? { name: options.user } : {};
-        const batchSize = options.user ? 1 : 1000;
-        let cursor = 0;
-        let processed = 0;
         const startedAt = Date.now();
-
-        while (true) {
-            const users = await prisma.user.findMany({
-                where: {
-                    ...where,
-                    id: { gt: cursor },
-                },
-                orderBy: { id: 'asc' },
-                take: batchSize,
-                select: {
-                    id: true,
-                    name: true,
-                    ratings: {
-                        where: { isRated: true },
-                        select: {
-                            id: true,
-                            newRating: true,
-                            InnerPerformance: true,
-                            isHeuristic: true,
-                            contest: {
-                                select: {
-                                    endTime: true,
-                                },
-                            },
-                        },
-                    },
-                },
-            });
-            if (users.length === 0) {
-                break;
-            }
-
-            const updates: Prisma.PrismaPromise<unknown>[] = [];
-            for (const user of users) {
-                const rebuilt = rebuildUserData(user);
-                processed++;
-                if (!options.dryRun) {
-                    updates.push(
-                        prisma.user.update({
-                            where: { id: user.id },
-                            data: rebuilt,
-                        }),
-                    );
-                }
-                if (options.user || processed % 1000 === 0) {
-                    console.log(
-                        `${options.dryRun ? '[dry-run] ' : ''}rebuilt ${user.name}: algo=${rebuilt.algoRating}, heuristic=${rebuilt.heuristicRating}`,
-                    );
-                }
-            }
-            if (updates.length > 0) {
-                await prisma.$transaction(updates);
-            }
-
-            cursor = users[users.length - 1].id;
-            if (options.user) {
-                break;
-            }
-        }
-
-        if (options.user && processed === 0) {
-            throw new Error(`User not found: ${options.user}`);
-        }
+        const useSqlMode = !options.user && !options.nodeMode;
+        const processed = useSqlMode
+            ? await rebuildAllUsersWithSql(prisma, options.dryRun)
+            : await rebuildUsersWithNode(prisma, options);
         const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
-        console.log(`${options.dryRun ? '[dry-run] ' : ''}rebuilt ratings for ${processed} user(s) in ${elapsed}s.`);
+        console.log(
+            `${options.dryRun ? '[dry-run] ' : ''}rebuilt ratings for ${processed} user(s) in ${elapsed}s using ${useSqlMode ? 'SQL' : 'Node'} mode.`,
+        );
     } finally {
         await prisma.$disconnect();
     }
