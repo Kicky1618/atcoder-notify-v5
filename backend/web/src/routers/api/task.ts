@@ -19,7 +19,10 @@ router.get("/spendTimes", async (req,res) => {
         where: { contestid: contest, taskid: task },
         select: { id: true },
     })
-    if (!taskRow) return []
+    if (taskRow.length === 0) {
+        res.json([]);
+        return;
+    }
     const h = (await Database.getDatabase().submissions.groupBy({
         by: ['time'],
         where: {

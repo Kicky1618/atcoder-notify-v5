@@ -16,7 +16,7 @@ export namespace ScraperContest {
         const $ = cheerio.load(response.data);
         const contestList = $('#contest-table-upcoming table tbody tr,#contest-table-action table tbody tr');
         const contestListArray = contestList.toArray();
-        contestListArray.forEach(analyzeContest);
+        await Promise.all(contestListArray.map(analyzeContest));
         await getPastContests();
     }
     async function getPastContests() {
@@ -34,7 +34,7 @@ export namespace ScraperContest {
         const $ = cheerio.load(response.data);
         const contestList = $('#main-container table tbody tr');
         const contestListArray = contestList.toArray();
-        contestListArray.forEach(analyzeContest);
+        await Promise.all(contestListArray.map(analyzeContest));
         const pageNations = $('#main-container .pagination li').toArray();
         const maxPage = pageNations.reduce((max, elem) => {
             const pageNumber = parseInt($(elem).text().trim());

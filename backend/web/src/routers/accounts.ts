@@ -22,7 +22,7 @@ router.get('/register', (req, res) => {
 
 router.get('/dashboard', async (req, res) => {
     if (!req.session.userId) {
-        res.redirect('accounts/login');
+        res.redirect('/accounts/login');
         return;
     }
     let atcoder = null;
@@ -40,7 +40,7 @@ router.get('/dashboard', async (req, res) => {
 });
 router.get('/link/atcoder', async (req, res) => {
     if (!req.session.userId) {
-        res.redirect('accounts/login');
+        res.redirect('/accounts/login');
         return;
     }
     const atcoder_account = req.query.username;
@@ -147,17 +147,19 @@ router.post('/register', async (req, res) => {
             });
             return;
     }
-    const inviteCode = await Database.getDatabase().kickyInviteCode.findUnique({
-        where: {
-            code: invite_code,
-        },
-    });
-    if (invite_code && !inviteCode) {
-        res.render('accounts/register', {
-            error: 'Invalid invite code.',
-            turnstile_sitekey: process.env.TURNSTILE_SITEKEY,
+    if (invite_code) {
+        const inviteCode = await Database.getDatabase().kickyInviteCode.findUnique({
+            where: {
+                code: invite_code,
+            },
         });
-        return;
+        if (!inviteCode) {
+            res.render('accounts/register', {
+                error: 'Invalid invite code.',
+                turnstile_sitekey: process.env.TURNSTILE_SITEKEY,
+            });
+            return;
+        }
     }
     const passwordSalt = crypto.randomBytes(16).toString('hex');
     const passwordHash = crypto.pbkdf2Sync(password, passwordSalt, 100000, 64, 'sha512').toString('hex');

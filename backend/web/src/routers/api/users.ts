@@ -65,7 +65,8 @@ router.get(['/', '/count', '/histogram', '/deviation'], async (req, res) => {
         }, z.number().min(1).max(200).default(50)),
         cursor: z.string().optional(),
         isActive: z.preprocess((val) => {
-            if (typeof val === 'string' && val !== '') return Boolean(val);
+            if (val === 'true') return true;
+            if (val === 'false') return false;
             return undefined;
         }, z.boolean().optional()),
     });
@@ -205,17 +206,17 @@ router.get(['/', '/count', '/histogram', '/deviation'], async (req, res) => {
     };
 
     let cursorFilter: any = {};
-    console.log(decoded)
     if (sortField0 === 'algoInnerRating') {
         sortField0 = 'algoAPerf';
     } else if (sortField0 === 'heuristicInnerRating') {
         sortField0 = 'heuristicAPerf';
     }
     if (decoded) {
+        const sortOperator = isAsc ? 'gt' : 'lt';
         if (sortField0 === 'algoRating') {
             cursorFilter = {
                 OR: [
-                    { algoRating: { lt: decoded.algoRating } },
+                    { algoRating: { [sortOperator]: decoded.algoRating } },
                     {
                         algoRating: { equals: decoded.algoRating },
                         name: { gt: decoded.name },
@@ -225,7 +226,7 @@ router.get(['/', '/count', '/histogram', '/deviation'], async (req, res) => {
         } else if (sortField0 === 'heuristicRating') {
             cursorFilter = {
                 OR: [
-                    { heuristicRating: { lt: decoded.heuristicRating } },
+                    { heuristicRating: { [sortOperator]: decoded.heuristicRating } },
                     {
                         heuristicRating: { equals: decoded.heuristicRating },
                         name: { gt: decoded.name },
@@ -235,7 +236,7 @@ router.get(['/', '/count', '/histogram', '/deviation'], async (req, res) => {
         } else if (sortField0 === 'algoAPerf') {
             cursorFilter = {
                 OR: [
-                    { algoAPerf: { lt: decoded.algoAPerf } },
+                    { algoAPerf: { [sortOperator]: decoded.algoAPerf } },
                     {
                         algoAPerf: { equals: decoded.algoAPerf },
                         name: { gt: decoded.name },
@@ -245,7 +246,7 @@ router.get(['/', '/count', '/histogram', '/deviation'], async (req, res) => {
         } else if (sortField0 === 'heuristicAPerf') {
             cursorFilter = {
                 OR: [
-                    { heuristicAPerf: { lt: decoded.heuristicAPerf } },
+                    { heuristicAPerf: { [sortOperator]: decoded.heuristicAPerf } },
                     {
                         heuristicAPerf: { equals: decoded.heuristicAPerf },
                         name: { gt: decoded.name },
@@ -284,10 +285,12 @@ router.get(['/', '/count', '/histogram', '/deviation'], async (req, res) => {
             name: string;
             algoRating: number;
             heuristicRating: number;
+            algoAPerf: number | null;
+            heuristicAPerf: number | null;
             [key: string]: any;
         };
         const payload: any = { name: last.name };
-        if (sortField0 !== 'name' && (sortField0 === 'algoRating' || sortField0 === 'heuristicRating' || sortField0 === 'algoInnerRating' || sortField0 === 'heuristicInnerRating')) {
+        if (sortField0 !== 'name' && (sortField0 === 'algoRating' || sortField0 === 'heuristicRating' || sortField0 === 'algoAPerf' || sortField0 === 'heuristicAPerf')) {
             payload[sortField0] = last[sortField0];
         }
         nextCursor = Buffer.from(JSON.stringify(payload)).toString('base64');
