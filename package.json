@@ -27,6 +27,7 @@
         "db:reset": "prisma migrate reset",
         "db:studio": "prisma studio",
         "db:migrate": "prisma migrate deploy",
+        "repair:ratings": "cd scraping && npm run repair:ratings",
         "start": "node backend/web/dist/index.js",
         "start:discord": "node backend/discordbot/dist/index.js"
     },
