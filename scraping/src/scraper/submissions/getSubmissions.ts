@@ -5,6 +5,7 @@ import { Element } from 'domhandler';
 import { convertScraperSubmissionToPrismaSubmission } from './typeConverter';
 import { Database } from '../../database';
 import { AxiosError } from 'axios';
+import { ScrapingState } from '../scrapingState';
 
 let window = 1;
 let timeout = 1000;
@@ -13,90 +14,107 @@ export function addSubmissionListener(listener: (sub: Submission) => void) {
     submissionListeners.add(listener);
 }
 export async function CrawlAllSubmissions(contest: string): Promise<void> {
-    return new Promise<void>(async (resolve) => {
+    return ScrapingState.run(`submissions:${contest}`, { contestId: contest }, () => new Promise<void>(async (resolve, reject) => {
         let page = 0;
         let isFinished = false;
+        let isSettled = false;
         AtCoderScraper.logger.info(`Crawling submissions for contest ${contest}...`);
 
-        const waitingJudges = new Set(
-            (
-                await Database.getDatabase().submissions.findMany({
-                    where: {
-                        task: { contestid: contest },
-                        status: {
-                            in: ['WR', 'WJ'],
-                        },
-                        datetime: {
-                            gte: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30),
-                        },
-                    },
-                })
-            ).map((v) => v.submissionId),
-        );
-        AtCoderScraper.logger.info(`Get all waiting submissions...`);
-        async function runWorker(workerId: number) {
-            if (workerId >= window) {
-                return;
-            }
-            page += 1;
-            const isFinishedFromWorker = await CrawlSubmissionWorker(contest, page, waitingJudges);
-            if (isFinishedFromWorker && !isFinished) {
-                isFinished = true;
-                for (let submissionId of waitingJudges) {
-                    const submissionData = await getSubmission(contest, submissionId.toString());
-                    if (!submissionData) {
-                        AtCoderScraper.logger.warn(`Submission ${submissionId} not found during final upsert`);
-                        await Database.getDatabase().submissions.delete({
-                            where: {
-                                submissionId: submissionId,
+        try {
+            const waitingJudges = new Set(
+                (
+                    await Database.getDatabase().submissions.findMany({
+                        where: {
+                            task: { contestid: contest },
+                            status: {
+                                in: ['WR', 'WJ'],
                             },
-                        });
-                        continue;
-                    }
-                    try {
-                        await Database.getDatabase().user.upsert({
-                            where: { name: submissionData.username },
-                            create: { name: submissionData.username },
-                            update: {},
-                        });
-
-                        const prismaSubmission = await convertScraperSubmissionToPrismaSubmission(submissionData);
-
-                        const beforeSubmission = await Database.getDatabase().submissions.findFirst({
-                            where: { submissionId: prismaSubmission.submissionId },
-                        });
-
-                        await Database.getDatabase().submissions.upsert({
-                            where: { submissionId: prismaSubmission.submissionId },
-                            create: prismaSubmission,
-                            update: prismaSubmission,
-                        });
-
-                        if (!beforeSubmission || beforeSubmission.status !== submissionData.status) {
-                            submissionListeners.forEach((listener) => listener(submissionData));
-                        }
-                        if (!beforeSubmission) {
-                            await Database.getDatabase().user.update({
-                                where: { name: submissionData.username },
-                                data: {
-                                    userSubmissionCount: { increment: 1 }
-                                }
-                            })
-                        }
-                    } catch (e) {
-                        AtCoderScraper.logger.error(`Failed to upsert submission ${submissionId} during finalization`, { error: e });
-                    }
+                            datetime: {
+                                gte: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30),
+                            },
+                        },
+                    })
+                ).map((v) => v.submissionId),
+            );
+            AtCoderScraper.logger.info(`Get all waiting submissions...`);
+            async function runWorker(workerId: number) {
+                if (workerId >= window || isSettled) {
+                    return;
                 }
-                resolve();
+                const currentPage = ++page;
+                try {
+                    await ScrapingState.set(`submissions:${contest}`, 'running', {
+                        contestId: contest,
+                        page: currentPage,
+                        waitingJudgeCount: waitingJudges.size,
+                    });
+                    const isFinishedFromWorker = await CrawlSubmissionWorker(contest, currentPage, waitingJudges);
+                    if (isFinishedFromWorker && !isFinished) {
+                        isFinished = true;
+                        for (let submissionId of waitingJudges) {
+                            const submissionData = await getSubmission(contest, submissionId.toString());
+                            if (!submissionData) {
+                                AtCoderScraper.logger.warn(`Submission ${submissionId} not found during final upsert`);
+                                await Database.getDatabase().submissions.delete({
+                                    where: {
+                                        submissionId: submissionId,
+                                    },
+                                });
+                                continue;
+                            }
+                            try {
+                                await Database.getDatabase().user.upsert({
+                                    where: { name: submissionData.username },
+                                    create: { name: submissionData.username },
+                                    update: {},
+                                });
+
+                                const prismaSubmission = await convertScraperSubmissionToPrismaSubmission(submissionData);
+
+                                const beforeSubmission = await Database.getDatabase().submissions.findFirst({
+                                    where: { submissionId: prismaSubmission.submissionId },
+                                });
+
+                                await Database.getDatabase().submissions.upsert({
+                                    where: { submissionId: prismaSubmission.submissionId },
+                                    create: prismaSubmission,
+                                    update: prismaSubmission,
+                                });
+
+                                if (!beforeSubmission || beforeSubmission.status !== submissionData.status) {
+                                    submissionListeners.forEach((listener) => listener(submissionData));
+                                }
+                                if (!beforeSubmission) {
+                                    await Database.getDatabase().user.update({
+                                        where: { name: submissionData.username },
+                                        data: {
+                                            userSubmissionCount: { increment: 1 }
+                                        }
+                                    })
+                                }
+                            } catch (e) {
+                                AtCoderScraper.logger.error(`Failed to upsert submission ${submissionId} during finalization`, { error: e });
+                            }
+                        }
+                        isSettled = true;
+                        resolve();
+                        return;
+                    }
+                    if (!isFinished) {
+                        setTimeout(() => runWorker(workerId), timeout);
+                    }
+                } catch (error) {
+                    isSettled = true;
+                    reject(error);
+                }
             }
-            if (!isFinished) {
-                setTimeout(() => runWorker(workerId), timeout);
+            for (let i = 0; i < window; i++) {
+                runWorker(i);
             }
+        } catch (error) {
+            reject(error);
         }
-        for (let i = 0; i < window; i++) {
-            runWorker(i);
-        }
-    });
+    }));
 }
 export function setWindow(newWindow: number) {
     if (newWindow < 1) {
@@ -104,6 +122,7 @@ export function setWindow(newWindow: number) {
     }
     window = newWindow;
     AtCoderScraper.logger.info(`Changed window size to ${window}`);
+    void ScrapingState.set('submission_settings', 'success', { window, timeout });
 }
 export function setTimeoutValue(newTimeout: number) {
     if (newTimeout < 0) {
@@ -111,6 +130,7 @@ export function setTimeoutValue(newTimeout: number) {
     }
     timeout = newTimeout;
     AtCoderScraper.logger.info(`Changed timeout to ${timeout}`);
+    void ScrapingState.set('submission_settings', 'success', { window, timeout });
 }
 async function CrawlSubmissionWorker(contest: string, page: number, waitingJudges: Set<bigint>): Promise<boolean> {
     const submissions = await getSubmissionPage(contest, page);

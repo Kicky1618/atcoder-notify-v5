@@ -3,6 +3,7 @@ import { Database } from '../../database';
 import { Proxy } from '../../proxy/proxy';
 import { AtCoderScraper } from '../atcoderScraper';
 import crypto from 'crypto';
+import { ScrapingState } from '../scrapingState';
 
 interface AtCoderResult {
     IsRated: boolean;
@@ -41,6 +42,8 @@ export namespace ScraperContestResult {
     let heuristicPageCache: Map<string, AtCoderUserPerformance[]> = new Map();
 
     export async function crawlContestResult(contestId: string) {
+        await ScrapingState.set(`contest_result:${contestId}`, 'running', { contestId });
+        try {
         const contestData = await Database.getDatabase().contest.findUnique({
             where: {
                 id: contestId,
@@ -48,21 +51,25 @@ export namespace ScraperContestResult {
         });
         if (!contestData) {
             AtCoderScraper.logger.error(`Contest ${contestId} not found in database.`);
+            await ScrapingState.set(`contest_result:${contestId}`, 'error', { contestId }, 'Contest not found in database');
             return;
         }
         if (contestData.ratingRangeEnd <= 0) {
             AtCoderScraper.logger.warn(`Contest ${contestId} is not rated, skipping result crawl.`);
+            await ScrapingState.set(`contest_result:${contestId}`, 'skipped', { contestId, reason: 'not_rated' });
             return;
         }
         const contestResultURL = `https://atcoder.jp/contests/${contestId}/results/json`;
         const response = await Proxy.get(contestResultURL, AtCoderScraper.getCookie());
         if (!response || !response.data) {
             AtCoderScraper.logger.error(`Failed to fetch contest results for ${contestId}.`);
+            await ScrapingState.set(`contest_result:${contestId}`, 'error', { contestId }, 'Failed to fetch contest results');
             return;
         }
         const results: AtCoderResult[] = JSON.parse(response.data);
         if (!Array.isArray(results) || results.length === 0) {
             AtCoderScraper.logger.warn(`No results found for contest ${contestId}.`);
+            await ScrapingState.set(`contest_result:${contestId}`, 'skipped', { contestId, reason: 'empty_results' });
             return;
         }
         const responseHash = crypto
@@ -84,19 +91,16 @@ export namespace ScraperContestResult {
             .digest('hex');
         if (contestData.resultPageHash === responseHash) {
             AtCoderScraper.logger.info(`No new results for contest ${contestId}, skipping update.`);
+            await ScrapingState.set(`contest_result:${contestId}`, 'skipped', {
+                contestId,
+                reason: 'unchanged',
+                resultCount: results.length,
+            });
             return;
         }
         await Database.getDatabase().userRatingChangeEvent.deleteMany({
             where: {
                 contestId: contestId,
-            },
-        });
-        await Database.getDatabase().contest.update({
-            where: {
-                id: contestId,
-            },
-            data: {
-                resultPageHash: responseHash,
             },
         });
         AtCoderScraper.logger.info(`Crawled results for contest ${contestId}, updating database.`);
@@ -205,6 +209,14 @@ export namespace ScraperContestResult {
                 },
             });
         }
+        await Database.getDatabase().contest.update({
+            where: {
+                id: contestId,
+            },
+            data: {
+                resultPageHash: responseHash,
+            },
+        });
         Main.sendEvent('contestResultCrawled', {
             contestId: contestId,
             results: results.map((r) => ({
@@ -216,6 +228,15 @@ export namespace ScraperContestResult {
             })),
         });
         AtCoderScraper.logger.info(`Successfully crawled results for contest ${contestId}, ${results.length} users processed.`);
+        await ScrapingState.set(`contest_result:${contestId}`, 'success', {
+            contestId,
+            resultCount: results.length,
+            responseHash,
+        });
+        } catch (error) {
+            await ScrapingState.set(`contest_result:${contestId}`, 'error', { contestId }, error);
+            throw error;
+        }
     }
     async function getUserPerformanceFromUserPage(user: string, contestId: string, isHeuristic: boolean) {
         AtCoderScraper.logger.info(`Fetching user performance for ${user} in contest ${contestId}.`);

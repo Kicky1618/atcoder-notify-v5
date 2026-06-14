@@ -10,6 +10,7 @@ import { TwitterApi } from 'twitter-api-v2';
 import { createCircleGraph } from '../utils/createCircleGraph';
 import sharp from 'sharp';
 import { rebuildTasksTable } from '../build_db/tasks';
+import { ScrapingState } from './scrapingState';
 
 export namespace AtCoderScraper {
     let sessionId: string | null = null;
@@ -52,64 +53,77 @@ export namespace AtCoderScraper {
     }
 
     async function refreshContestAndTaskTables() {
-        await ScraperContest.CrawlAllContest();
-        await rebuildTasksTable();
+        await ScrapingState.run('contest_task_refresh', undefined, async () => {
+            await ScraperContest.CrawlAllContest();
+            await rebuildTasksTable();
+        });
     }
 
     export async function CrawlContestResults(isNull = false) {
-        if (crawlingContestResults) return;
-        const contests = await Database.getDatabase().contest.findMany({
-            where: {
-                endTime: {
-                    lte: new Date(),
-                    // gte: new Date(new Date().setDate(new Date().getDate() - 14)),
-                },
-                resultPageHash: isNull ? void 0 : null,
-            },
-            orderBy: { endTime: 'asc' },
-        });
-        const contestsUnCrawledPDF = await Database.getDatabase().contest.findMany({
-            where: {
-                endTime: {
-                    lte: new Date(),
-                },
-                crawledPDF: false,
-            },
-            orderBy: { endTime: 'asc' },
-        });
+        if (crawlingContestResults) {
+            await ScrapingState.set('contest_results', 'skipped', { reason: 'already_running', isNull });
+            return;
+        }
         crawlingContestResults = true;
-        const concurrency = 3;
-        let idx = 0;
-        const workers = Array.from({ length: concurrency }, () =>
-            (async () => {
-            while (true) {
-                const i = idx++;
-                if (i >= contests.length) break;
-                const contest = contests[i];
-                try {
-                    await ScraperContestResult.crawlContestResult(contest.id);
-                } catch (err: any) {
-                    logger.error(err, err.cause?.code, err.cause?.options, `Failed to crawl contest ${contest.id}`);
-                }
-            }
-            })()
-        );
-        await Promise.all(workers);
-
-        crawlingContestResults = false;
+        try {
+            await ScrapingState.run('contest_results', { isNull }, async () => {
+                const contests = await Database.getDatabase().contest.findMany({
+                    where: {
+                        endTime: {
+                            lte: new Date(),
+                            // gte: new Date(new Date().setDate(new Date().getDate() - 14)),
+                        },
+                        resultPageHash: isNull ? void 0 : null,
+                    },
+                    orderBy: { endTime: 'asc' },
+                });
+                await ScrapingState.set('contest_results', 'running', { isNull, contestCount: contests.length });
+                const concurrency = 3;
+                let idx = 0;
+                const workers = Array.from({ length: concurrency }, () =>
+                    (async () => {
+                    while (true) {
+                        const i = idx++;
+                        if (i >= contests.length) break;
+                        const contest = contests[i];
+                        try {
+                            await ScraperContestResult.crawlContestResult(contest.id);
+                        } catch (err: any) {
+                            logger.error(err, err.cause?.code, err.cause?.options, `Failed to crawl contest ${contest.id}`);
+                        }
+                    }
+                    })()
+                );
+                await Promise.all(workers);
+            });
+        } finally {
+            crawlingContestResults = false;
+        }
     }
     export async function CrawlAllSubmissionsEvent() {
         logger.info('Crawling all submissions...');
-        const contests = await Database.getDatabase().contest.findMany({
-            where: {
-                endTime: {
-                    lte: new Date(),
+        await ScrapingState.set('all_submissions', 'running');
+        try {
+            const contests = await Database.getDatabase().contest.findMany({
+                where: {
+                    endTime: {
+                        lte: new Date(),
+                    },
                 },
-            },
-            orderBy: { endTime: 'asc' },
-        });
-        for (const contest of contests) {
-            await CrawlAllSubmissions(contest.id);
+                orderBy: { endTime: 'asc' },
+            });
+            await ScrapingState.set('all_submissions', 'running', { contestCount: contests.length });
+            for (const contest of contests) {
+                try {
+                    await CrawlAllSubmissions(contest.id);
+                } catch (error) {
+                    logger.error(`Failed to crawl submissions for contest ${contest.id}`, { error });
+                }
+            }
+            await ScrapingState.set('all_submissions', 'success', { contestCount: contests.length });
+        } catch (error) {
+            await ScrapingState.set('all_submissions', 'error', undefined, error);
+            logger.error('Crawling all submissions failed.', { error });
         }
         nextTick(() => {
             logger.info('Crawling all submissions completed.');

@@ -8,16 +8,19 @@ import { Database } from '../../database';
 import puppeteer from 'puppeteer';
 import path from 'path';
 import { existsSync } from 'fs';
+import { ScrapingState } from '../scrapingState';
 
 export namespace ScraperContest {
     export async function CrawlAllContest() {
-        const futureAndCurrentContestsURL = `https://atcoder.jp/contests/?lang=ja`;
-        const response = await Proxy.get(futureAndCurrentContestsURL, AtCoderScraper.getCookie());
-        const $ = cheerio.load(response.data);
-        const contestList = $('#contest-table-upcoming table tbody tr,#contest-table-action table tbody tr');
-        const contestListArray = contestList.toArray();
-        await Promise.all(contestListArray.map(analyzeContest));
-        await getPastContests();
+        await ScrapingState.run('contests', undefined, async () => {
+            const futureAndCurrentContestsURL = `https://atcoder.jp/contests/?lang=ja`;
+            const response = await Proxy.get(futureAndCurrentContestsURL, AtCoderScraper.getCookie());
+            const $ = cheerio.load(response.data);
+            const contestList = $('#contest-table-upcoming table tbody tr,#contest-table-action table tbody tr');
+            const contestListArray = contestList.toArray();
+            await Promise.all(contestListArray.map(analyzeContest));
+            await getPastContests();
+        });
     }
     async function getPastContests() {
         let maxPage = 1;
