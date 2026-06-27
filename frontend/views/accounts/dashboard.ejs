@@ -26,17 +26,6 @@
                     <th>Advance</th>
                 </tr>
                 <tr>
-                    <td>Linked &#x1d54f; Account</td>
-                    <td>
-                        <% if (user.twitterOAuthUsername) { %><a target="_blank" href="https://x.com/<%= user.twitterOAuthUsername %>"
-                            >@<%= user.twitterOAuthUsername %></a
-                        ><% } else {%>(NULL)<% } %>
-                    </td>
-                    <td>
-                        <a target="_blank" href="/twitter/">Link Account</a>
-                    </td>
-                </tr>
-                <tr>
                     <td>Linked AtCoder Account</td>
                     <td>
                         <% if (user.linkedAtCoderUserId) { %><a target="_blank" href="https://atcoder.jp/users/<%= atcoder.name %>"><%= atcoder.name %></a><% }
