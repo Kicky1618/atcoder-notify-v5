@@ -49,7 +49,6 @@ COPY status ./status
 COPY fonts ./fonts
 COPY docs ./docs
 COPY prisma ./prisma
-COPY production.env .env
 RUN npx prisma generate
 
 # Build subprojects except scraping

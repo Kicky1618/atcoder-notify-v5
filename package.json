@@ -30,7 +30,11 @@
         "repair:ratings": "cd scraping && npm run repair:ratings",
         "sync:user-rating-cache": "cd scraping && npm run sync:user-rating-cache",
         "start": "node backend/web/dist/index.js",
-        "start:discord": "node backend/discordbot/dist/index.js"
+        "start:discord": "node backend/discordbot/dist/index.js",
+        "compose:up": "docker compose up -d --build",
+        "compose:down": "docker compose down",
+        "compose:logs": "docker compose logs -f",
+        "compose:ps": "docker compose ps"
     },
     "keywords": [
         "AtCoder",
