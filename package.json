@@ -28,6 +28,7 @@
         "db:studio": "prisma studio",
         "db:migrate": "prisma migrate deploy",
         "repair:ratings": "cd scraping && npm run repair:ratings",
+        "sync:user-rating-cache": "cd scraping && npm run sync:user-rating-cache",
         "start": "node backend/web/dist/index.js",
         "start:discord": "node backend/discordbot/dist/index.js"
     },
