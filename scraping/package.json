@@ -3,6 +3,7 @@
         "start": "node ./dist/index.js",
         "build": "tsc",
         "build:watch": "tsc --watch",
-        "repair:ratings": "npm run build && node ./dist/commands/rebuildUserRatings.js"
+        "repair:ratings": "npm run build && node ./dist/commands/rebuildUserRatings.js",
+        "sync:user-rating-cache": "npm run repair:ratings"
     }
 }

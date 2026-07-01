@@ -8,10 +8,11 @@ type Options = {
     user?: string;
     dryRun: boolean;
     nodeMode: boolean;
+    batchSize: number;
 };
 
 function parseOptions(argv: string[]): Options {
-    const options: Options = { dryRun: false, nodeMode: false };
+    const options: Options = { dryRun: false, nodeMode: false, batchSize: 1000 };
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
         if (arg === '--dry-run') {
@@ -27,6 +28,12 @@ function parseOptions(argv: string[]): Options {
             i++;
         } else if (arg.startsWith('--user=')) {
             options.user = arg.slice('--user='.length);
+        } else if (arg === '--batch-size') {
+            const batchSize = parseBatchSize(argv[i + 1]);
+            options.batchSize = batchSize;
+            i++;
+        } else if (arg.startsWith('--batch-size=')) {
+            options.batchSize = parseBatchSize(arg.slice('--batch-size='.length));
         } else if (arg === '--help' || arg === '-h') {
             printHelp();
             process.exit(0);
@@ -37,19 +44,32 @@ function parseOptions(argv: string[]): Options {
     return options;
 }
 
+function parseBatchSize(value: string | undefined) {
+    if (!value) {
+        throw new Error('--batch-size requires a positive integer');
+    }
+    const batchSize = Number(value);
+    if (!Number.isInteger(batchSize) || batchSize <= 0) {
+        throw new Error(`Invalid --batch-size: ${value}`);
+    }
+    return batchSize;
+}
+
 function printHelp() {
     console.log(`Usage:
   npm run repair:ratings
   npm run repair:ratings -- --user <atcoder_user>
   npm run repair:ratings -- --dry-run
   npm run repair:ratings -- --node
+  npm run repair:ratings -- --node --batch-size 500
 
-Rebuilds User.algoRating, User.heuristicRating, User.algoAPerf,
-User.heuristicAPerf and User.lastContestTime from userRatingChangeEvent
-ordered by Contest.endTime.
+Synchronizes cached User.algoRating, User.heuristicRating,
+User.algoAPerf, User.heuristicAPerf and User.lastContestTime from
+rated userRatingChangeEvent rows ordered by Contest.endTime.
 
-By default, full rebuilds run as one SQL UPDATE inside the database.
-Use --node only as a compatibility fallback.`);
+By default, full synchronization runs as one SQL UPDATE inside the database.
+Use --node only as a compatibility fallback or when --user is specified.
+--batch-size controls only Node mode.`);
 }
 
 function calculateAPerf(innerPerformances: number[]) {
@@ -181,7 +201,7 @@ async function rebuildAllUsersWithSql(prisma: PrismaClient, dryRun: boolean) {
 
 async function rebuildUsersWithNode(prisma: PrismaClient, options: Options) {
     const where = options.user ? { name: options.user } : {};
-    const batchSize = options.user ? 1 : 1000;
+    const batchSize = options.user ? 1 : options.batchSize;
     let cursor = 0;
     let processed = 0;
 
