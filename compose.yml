@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: atcoder-notify-v5:latest
     ports:
       - "${APP_PORT:-4080}:4080"
     environment:
@@ -25,6 +26,7 @@ services:
     build:
       context: .
       dockerfile: scraping/Dockerfile
+    image: atcoder-notify-v5-scraping:latest
     ports:
       - "${SCRAPING_PORT:-4082}:4082"
     environment:
