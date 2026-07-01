@@ -11,7 +11,6 @@ RUN npm ci --verbose
 # Copy scraping sources
 COPY scraping ./scraping
 COPY prisma ./prisma
-COPY production.env .env
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \

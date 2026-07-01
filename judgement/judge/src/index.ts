@@ -31,8 +31,9 @@ interface JudgeResult {
 const REDIS_QUEUE = 'judgement';
 
 async function main() {
-    const redisRead = createClient({ url: 'redis://127.0.0.1:6379' });
-    const redisWrite = createClient({ url: 'redis://127.0.0.1:6379' });
+    const redisUrl = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
+    const redisRead = createClient({ url: redisUrl });
+    const redisWrite = createClient({ url: redisUrl });
     const dockerClient = new Docker({ host: process.env.DOCKER_HOST || 'localhost', port: Number(process.env.DOCKER_PORT) || 2375 });
     await redisRead.connect();
     await redisWrite.connect();
