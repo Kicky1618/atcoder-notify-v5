@@ -41,7 +41,6 @@ services:
   db:
     build:
       context: ./mariadb
-    image: atcoder-notify-v5-mariadb:latest
     ports:
       - "${DB_PORT:-3306}:3306"
     environment:
