@@ -1,0 +1,71 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${APP_PORT:-4080}:4080"
+    environment:
+      PORT: 4080
+      DATABASE_URL: ${DATABASE_URL:-mysql://root:password@db:3306/defaultdb}
+      PROXY_HOST: ${PROXY_HOST:-scraping}
+      PROXY_PORT: ${PROXY_PORT:-4082}
+      DOMAIN: ${DOMAIN:-}
+      SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:-secret}
+      TURNSTILE_SITEKEY: ${TURNSTILE_SITEKEY:-}
+      TURNSTILE_SECRET: ${TURNSTILE_SECRET:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      scraping:
+        condition: service_started
+    restart: unless-stopped
+
+  scraping:
+    build:
+      context: .
+      dockerfile: scraping/Dockerfile
+    ports:
+      - "${SCRAPING_PORT:-4082}:4082"
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-mysql://root:password@db:3306/defaultdb}
+      PROXY_PORT: ${PROXY_PORT:-4082}
+      SOCK5_PROXY: ${SOCK5_PROXY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    build:
+      context: ./mariadb
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    environment:
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-defaultdb}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-password}
+      TZ: ${TZ:-Asia/Tokyo}
+    volumes:
+      - ./mariadb/conf.d:/etc/mysql/conf.d:ro
+      - db-volume:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-volume:/data
+    restart: unless-stopped
+
+volumes:
+  db-volume:
+    name: atcoder-notify-v5-mariadb-data
+  redis-volume:
+    name: atcoder-notify-v5-redis-data
